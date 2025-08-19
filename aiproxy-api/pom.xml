@@ -62,7 +62,7 @@
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>
                 <configuration>
-                    <mainClass>com.aiproxy.api.RelayApiApplication</mainClass>
+                    <mainClass>com.aiproxy.api.AiProxyApplication</mainClass>
                 </configuration>
             </plugin>
         </plugins>
