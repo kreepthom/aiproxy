@@ -20,8 +20,8 @@ import java.util.UUID;
 @Slf4j
 public class AccountService {
     
-    private static final String ACCOUNT_KEY_PREFIX = "account:";
-    private static final String ACCOUNT_SET_KEY = "accounts:all";
+    private static final String ACCOUNT_KEY_PREFIX = "oauth:account:";
+    private static final String ACCOUNT_SET_KEY = "oauth:accounts:all";
     
     private final ReactiveRedisTemplate<String, String> redisTemplate;
     private final ClaudeOAuthService oauthService;
@@ -67,49 +67,21 @@ public class AccountService {
             account.setCreatedAt(LocalDateTime.now());
         }
         
-        // Save to database first
+        // Save to database only (no Redis cache)
         return Mono.fromCallable(() -> {
             AccountEntity entity = convertToEntity(account);
             return accountRepository.save(entity);
         })
         .subscribeOn(Schedulers.boundedElastic())
         .map(this::convertToModel)
-        .flatMap(savedAccount -> {
-            // Then update Redis cache
-            String key = ACCOUNT_KEY_PREFIX + savedAccount.getId();
-            String json = JsonUtil.toJson(savedAccount);
-            
-            return redisTemplate.opsForValue()
-                .set(key, json, Duration.ofHours(1))  // Shorter cache duration
-                .then(redisTemplate.opsForSet().add(ACCOUNT_SET_KEY, savedAccount.getId()))
-                .thenReturn(savedAccount);
-        })
         .doOnSuccess(acc -> log.info("Saved Claude account: {}", acc.getEmail()));
     }
     
     public Mono<ClaudeAccount> getAccount(String accountId) {
-        String key = ACCOUNT_KEY_PREFIX + accountId;
-        
-        // Try cache first
-        return redisTemplate.opsForValue()
-            .get(key)
-            .map(json -> JsonUtil.fromJson(json, ClaudeAccount.class))
-            .switchIfEmpty(
-                // If not in cache, get from database
-                Mono.fromCallable(() -> accountRepository.findById(accountId).orElse(null))
-                    .subscribeOn(Schedulers.boundedElastic())
-                    .map(this::convertToModel)
-                    .flatMap(account -> {
-                        if (account != null) {
-                            // Update cache
-                            String json = JsonUtil.toJson(account);
-                            return redisTemplate.opsForValue()
-                                .set(key, json, Duration.ofHours(1))
-                                .thenReturn(account);
-                        }
-                        return Mono.empty();
-                    })
-            );
+        // Get directly from database (no cache)
+        return Mono.fromCallable(() -> accountRepository.findById(accountId).orElse(null))
+            .subscribeOn(Schedulers.boundedElastic())
+            .map(this::convertToModel);
     }
     
     public Flux<ClaudeAccount> getAllActiveAccounts() {
@@ -145,9 +117,7 @@ public class AccountService {
     }
     
     public Mono<Boolean> deleteAccount(String accountId) {
-        String key = ACCOUNT_KEY_PREFIX + accountId;
-        
-        // Delete from database first
+        // Delete from database only (no cache to clean)
         return Mono.fromCallable(() -> {
             if (accountRepository.existsById(accountId)) {
                 accountRepository.deleteById(accountId);
@@ -155,16 +125,7 @@ public class AccountService {
             }
             return false;
         })
-        .subscribeOn(Schedulers.boundedElastic())
-        .flatMap(deleted -> {
-            if (deleted) {
-                // Then remove from cache
-                return redisTemplate.delete(key)
-                    .then(redisTemplate.opsForSet().remove(ACCOUNT_SET_KEY, accountId))
-                    .thenReturn(true);
-            }
-            return Mono.just(false);
-        });
+        .subscribeOn(Schedulers.boundedElastic());
     }
     
     public Flux<ClaudeAccount> getAllAccounts() {

@@ -1,38 +1,32 @@
 package com.aiproxy.core.service;
 
+import com.aiproxy.auth.service.AccountService;
 import com.aiproxy.common.enums.AccountStatus;
 import com.aiproxy.common.exception.RelayException;
 import com.aiproxy.common.model.Account;
-import com.aiproxy.common.utils.JsonUtil;
+import com.aiproxy.common.model.ClaudeAccount;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.data.redis.core.ReactiveRedisTemplate;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
-import reactor.core.scheduler.Schedulers;
 
-import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.Comparator;
 import java.util.Map;
-import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.atomic.AtomicInteger;
 
 @Service
 @Slf4j
 public class AccountPoolService {
     
-    private final ReactiveRedisTemplate<String, String> redisTemplate;
+    private final AccountService accountService;
     private final Map<String, AccountHealth> healthMap = new ConcurrentHashMap<>();
-    private final AtomicInteger roundRobinCounter = new AtomicInteger(0);
-    private static final String ACCOUNT_PREFIX = "account:";
     
-    public AccountPoolService(ReactiveRedisTemplate<String, String> redisTemplate) {
-        this.redisTemplate = redisTemplate;
-        // Initialize with a demo account
-        // initializeDemoAccount(); // Disabled - use real accounts from database
+    @Autowired
+    public AccountPoolService(AccountService accountService) {
+        this.accountService = accountService;
     }
     
     public Mono<Account> selectAccount() {
@@ -60,12 +54,61 @@ public class AccountPoolService {
     }
     
     private Flux<Account> getAvailableAccounts() {
-        return redisTemplate.keys(ACCOUNT_PREFIX + "*")
-            .flatMap(key -> redisTemplate.opsForValue().get(key))
-            .map(json -> JsonUtil.fromJson(json, Account.class))
+        // 直接从数据库获取账号，并检查token是否需要刷新
+        return accountService.getAllActiveAccounts()
+            .flatMap(claudeAccount -> {
+                // 检查token是否需要刷新（提前30分钟）
+                if (claudeAccount.getTokenExpiresAt() != null) {
+                    LocalDateTime refreshThreshold = LocalDateTime.now().plusMinutes(30);
+                    if (claudeAccount.getTokenExpiresAt().isBefore(refreshThreshold)) {
+                        log.info("Token for account {} will expire soon, refreshing...", claudeAccount.getEmail());
+                        return accountService.refreshAccountToken(claudeAccount)
+                            .map(this::convertToAccount)
+                            .onErrorResume(error -> {
+                                log.error("Failed to refresh token for account {}: {}", 
+                                    claudeAccount.getEmail(), error.getMessage());
+                                // 如果刷新失败，标记账号为过期
+                                claudeAccount.setStatus("EXPIRED");
+                                return Mono.just(convertToAccount(claudeAccount));
+                            });
+                    }
+                }
+                return Mono.just(convertToAccount(claudeAccount));
+            })
             .filter(this::isAccountAvailable)
             .sort(Comparator.comparing(Account::getLastUsedAt, 
                 Comparator.nullsFirst(Comparator.naturalOrder())));
+    }
+    
+    private Account convertToAccount(ClaudeAccount claudeAccount) {
+        // 转换ClaudeAccount为Account
+        AccountStatus accountStatus = claudeAccount.isEnabled() 
+            ? AccountStatus.ACTIVE 
+            : AccountStatus.DISABLED;
+            
+        // 如果状态是EXPIRED，使用EXPIRED状态
+        if ("EXPIRED".equals(claudeAccount.getStatus())) {
+            accountStatus = AccountStatus.EXPIRED;
+        }
+        
+        return Account.builder()
+            .id(claudeAccount.getId())
+            .name(claudeAccount.getEmail())
+            .email(claudeAccount.getEmail())
+            .accessToken(claudeAccount.getAccessToken())
+            .refreshToken(claudeAccount.getRefreshToken())
+            .status(accountStatus)
+            .expireAt(claudeAccount.getTokenExpiresAt() != null 
+                ? claudeAccount.getTokenExpiresAt() 
+                : LocalDateTime.now().plusDays(7))
+            .createdAt(claudeAccount.getCreatedAt() != null 
+                ? claudeAccount.getCreatedAt() 
+                : LocalDateTime.now())
+            .lastUsedAt(claudeAccount.getLastUsedAt())
+            .usageCount(claudeAccount.getTotalRequests() != null 
+                ? claudeAccount.getTotalRequests().longValue() 
+                : 0L)
+            .build();
     }
     
     private boolean isAccountAvailable(Account account) {
@@ -86,7 +129,19 @@ public class AccountPoolService {
     public void markAccountSuccess(String accountId) {
         AccountHealth health = healthMap.computeIfAbsent(accountId, k -> new AccountHealth());
         health.recordSuccess();
-        updateAccountLastUsed(accountId);
+        
+        // 更新数据库中的最后使用时间
+        accountService.getAccountById(accountId)
+            .flatMap(account -> {
+                account.setLastUsedAt(LocalDateTime.now());
+                Long requests = account.getTotalRequests();
+                account.setTotalRequests((requests != null ? requests : 0L) + 1);
+                return accountService.saveAccount(account);
+            })
+            .subscribe(
+                success -> log.debug("Updated last used time for account {}", accountId),
+                error -> log.error("Failed to update account {}: {}", accountId, error.getMessage())
+            );
     }
     
     public void markAccountFailed(String accountId, Throwable error) {
@@ -94,107 +149,55 @@ public class AccountPoolService {
         health.recordFailure(error);
         
         if (health.getConsecutiveFailures() > 5) {
-            disableAccount(accountId);
-            log.warn("Account {} disabled after 5 consecutive failures", accountId);
+            // 禁用账号
+            accountService.getAccountById(accountId)
+                .flatMap(account -> {
+                    account.setStatus("ERROR");
+                    account.setEnabled(false);
+                    return accountService.saveAccount(account);
+                })
+                .subscribe(
+                    success -> log.warn("Account {} disabled after 5 consecutive failures", accountId),
+                    err -> log.error("Failed to disable account {}: {}", accountId, err.getMessage())
+                );
         }
     }
     
-    private void updateAccountLastUsed(String accountId) {
-        String key = ACCOUNT_PREFIX + accountId;
-        redisTemplate.opsForValue().get(key)
-            .map(json -> JsonUtil.fromJson(json, Account.class))
-            .doOnNext(account -> {
-                account.setLastUsedAt(LocalDateTime.now());
-                // 修复空指针异常：如果usageCount为null，初始化为0
-                Long currentUsage = account.getUsageCount();
-                account.setUsageCount((currentUsage != null ? currentUsage : 0L) + 1);
-                String updatedJson = JsonUtil.toJson(account);
-                // 保持7天的TTL
-                redisTemplate.opsForValue().set(key, updatedJson, Duration.ofDays(7)).subscribe();
-            })
-            .subscribe();
-    }
-    
-    private void disableAccount(String accountId) {
-        String key = ACCOUNT_PREFIX + accountId;
-        redisTemplate.opsForValue().get(key)
-            .map(json -> JsonUtil.fromJson(json, Account.class))
-            .doOnNext(account -> {
-                account.setStatus(AccountStatus.ERROR);
-                String updatedJson = JsonUtil.toJson(account);
-                // 保持7天的TTL
-                redisTemplate.opsForValue().set(key, updatedJson, Duration.ofDays(7)).subscribe();
-            })
-            .subscribe();
-    }
-    
-    @Scheduled(fixedDelay = 30000) // Check every 30 seconds
+    @Scheduled(fixedDelay = 300000) // Check every 5 minutes
     public void performHealthCheck() {
         log.debug("Performing health check on accounts");
-        // 获取所有账户（包括ERROR状态的）
-        redisTemplate.keys(ACCOUNT_PREFIX + "*")
-            .flatMap(key -> redisTemplate.opsForValue().get(key))
-            .map(json -> JsonUtil.fromJson(json, Account.class))
-            .parallel()
-            .runOn(Schedulers.parallel())
-            .doOnNext(account -> {
-                AccountHealth health = healthMap.computeIfAbsent(account.getId(), 
-                    k -> new AccountHealth());
-                
-                // 如果账户是ERROR状态，且已经过了5分钟，尝试恢复
-                if (account.getStatus() == AccountStatus.ERROR && 
-                    health.getLastCheckTime() != null &&
-                    health.getLastCheckTime().plusMinutes(5).isBefore(LocalDateTime.now())) {
-                    log.info("Attempting to recover account {} from ERROR status", account.getId());
-                    recoverAccount(account.getId());
-                    health.reset();
-                }
-                
-                // Reset health if it's been stable for a while
-                if (health.getConsecutiveFailures() == 0 && 
-                    health.getLastCheckTime() != null &&
-                    health.getLastCheckTime().plusMinutes(5).isBefore(LocalDateTime.now())) {
-                    health.reset();
-                }
-            })
-            .subscribe();
-    }
-    
-    private void recoverAccount(String accountId) {
-        String key = ACCOUNT_PREFIX + accountId;
-        redisTemplate.opsForValue().get(key)
-            .map(json -> JsonUtil.fromJson(json, Account.class))
-            .doOnNext(account -> {
-                account.setStatus(AccountStatus.ACTIVE);
-                String updatedJson = JsonUtil.toJson(account);
-                redisTemplate.opsForValue().set(key, updatedJson, Duration.ofDays(7)).subscribe();
-                log.info("Account {} recovered to ACTIVE status", accountId);
-            })
-            .subscribe();
-    }
-    
-    private void initializeDemoAccount() {
-        // Create a demo account for testing
-        Account demoAccount = Account.builder()
-            .id(UUID.randomUUID().toString())
-            .name("Demo Account")
-            .email("demo@claude-relay.com")
-            .accessToken("demo-token-" + UUID.randomUUID())
-            .refreshToken("demo-refresh-" + UUID.randomUUID())
-            .status(AccountStatus.ACTIVE)
-            .expireAt(LocalDateTime.now().plusDays(30))
-            .createdAt(LocalDateTime.now())
-            .usageCount(0L)
-            .build();
         
-        String key = ACCOUNT_PREFIX + demoAccount.getId();
-        String json = JsonUtil.toJson(demoAccount);
-        redisTemplate.opsForValue().set(key, json, Duration.ofDays(30))
-            .subscribe(success -> {
-                if (Boolean.TRUE.equals(success)) {
-                    log.info("Demo account created: {}", demoAccount.getId());
+        // 重置长时间未使用的健康状态
+        healthMap.entrySet().removeIf(entry -> {
+            AccountHealth health = entry.getValue();
+            if (health.getLastCheckTime() != null &&
+                health.getLastCheckTime().plusMinutes(10).isBefore(LocalDateTime.now())) {
+                log.debug("Removing stale health status for account {}", entry.getKey());
+                return true;
+            }
+            return false;
+        });
+        
+        // 尝试恢复ERROR状态的账号
+        accountService.getAllAccounts()
+            .filter(account -> "ERROR".equals(account.getStatus()))
+            .flatMap(account -> {
+                AccountHealth health = healthMap.get(account.getId());
+                if (health == null || 
+                    (health.getLastCheckTime() != null && 
+                     health.getLastCheckTime().plusMinutes(5).isBefore(LocalDateTime.now()))) {
+                    log.info("Attempting to recover account {} from ERROR status", account.getId());
+                    account.setStatus("ACTIVE");
+                    account.setEnabled(true);
+                    healthMap.remove(account.getId());
+                    return accountService.saveAccount(account);
                 }
-            });
+                return Mono.empty();
+            })
+            .subscribe(
+                account -> log.info("Account {} recovered to ACTIVE status", account.getEmail()),
+                error -> log.error("Error during health check: {}", error.getMessage())
+            );
     }
     
     // Inner class for tracking account health
