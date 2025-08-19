@@ -159,4 +159,4 @@ docker-compose down
 
 ## 📮 联系方式
 
-如有问题，请提交 [Issue](https://github.com/yourusername/aiproxy/issues)
+如有问题，请提交 [Issue](https://github.com/dev-tonic/aiproxy/issues)
