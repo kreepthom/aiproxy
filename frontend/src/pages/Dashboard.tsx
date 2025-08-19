@@ -33,7 +33,7 @@ const { Text } = Typography
 
 const Dashboard: React.FC = () => {
   const [collapsed, setCollapsed] = useState(false)
-  const [systemName, setSystemName] = useState('Claude Relay')
+  const [systemName, setSystemName] = useState('AI Proxy')
   const navigate = useNavigate()
   const location = useLocation()
   const { username, logout } = useAuthStore()

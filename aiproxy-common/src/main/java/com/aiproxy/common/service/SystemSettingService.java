@@ -42,7 +42,7 @@ public class SystemSettingService {
     
     private void initDefaultSettings() {
         // 默认设置
-        settingsCache.put("system.name", "Claude Relay");
+        settingsCache.put("system.name", "AI Proxy");
         settingsCache.put("claude.base.url", "https://api.anthropic.com");
         settingsCache.put("gemini.base.url", "https://generativelanguage.googleapis.com");
         settingsCache.put("session.timeout", "24");
@@ -128,7 +128,7 @@ public class SystemSettingService {
     }
     
     public String getSystemName() {
-        return settingsCache.getOrDefault("system.name", "Claude Relay");
+        return settingsCache.getOrDefault("system.name", "AI Proxy");
     }
     
     private String convertToKey(String group, String fieldName) {
@@ -254,7 +254,7 @@ public class SystemSettingService {
         
         switch (group) {
             case "general":
-                defaults.put("systemName", "Claude Relay");
+                defaults.put("systemName", "AI Proxy");
                 defaults.put("claudeBaseUrl", "https://api.anthropic.com");
                 defaults.put("geminiBaseUrl", "https://generativelanguage.googleapis.com");
                 defaults.put("sessionTimeout", 24);
