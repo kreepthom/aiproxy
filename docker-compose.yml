@@ -1,0 +1,47 @@
+version: '3.8'
+
+services:
+  app:
+    build: .
+    container_name: aiproxy
+    ports:
+      - "8080:8080"
+    environment:
+      - SPRING_PROFILES_ACTIVE=prod
+      - REDIS_HOST=redis
+      - JWT_SECRET=${JWT_SECRET:-DefaultJWTSecretKey12345678901234567890}
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY:-DefaultEncryptionKey123456789012}
+      - CLAUDE_CLIENT_ID=${CLAUDE_CLIENT_ID:-your-claude-client-id}
+      - CLAUDE_CLIENT_SECRET=${CLAUDE_CLIENT_SECRET:-your-claude-client-secret}
+    depends_on:
+      - redis
+    restart: unless-stopped
+    networks:
+      - aiproxy-network
+    volumes:
+      - ./logs:/app/logs
+      
+  redis:
+    image: redis:7-alpine
+    container_name: aiproxy-redis
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD:-}
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - aiproxy-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+
+networks:
+  aiproxy-network:
+    driver: bridge
+
+volumes:
+  redis_data:
+    driver: local

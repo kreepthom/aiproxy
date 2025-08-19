@@ -1,0 +1,112 @@
+# Compiled class files
+*.class
+
+# Log files
+*.log
+logs/
+/var/log/
+
+# Package Files
+*.jar
+*.war
+*.nar
+*.ear
+*.zip
+*.tar.gz
+*.rar
+
+# Maven
+target/
+pom.xml.tag
+pom.xml.releaseBackup
+pom.xml.versionsBackup
+pom.xml.next
+release.properties
+dependency-reduced-pom.xml
+buildNumber.properties
+.mvn/timing.properties
+.mvn/wrapper/maven-wrapper.jar
+
+# IDE - IntelliJ IDEA
+.idea/
+*.iws
+*.iml
+*.ipr
+out/
+
+# IDE - Eclipse
+.apt_generated
+.classpath
+.factorypath
+.project
+.settings
+.springBeans
+.sts4-cache
+
+# IDE - VSCode
+.vscode/
+*.code-workspace
+
+# OS Files
+.DS_Store
+Thumbs.db
+
+# Environment variables and sensitive data
+.env
+.env.local
+.env.*.local
+*.env
+!.env.example
+
+# Application specific
+application-local.yml
+application-local.properties
+application-dev.yml
+application-dev.properties
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Redis dump
+dump.rdb
+
+# Node (for frontend)
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+dist/
+.npm
+.yarn-integrity
+
+# Temporary files
+*.tmp
+*.temp
+*.swp
+*~
+.#*
+
+# Sensitive configuration files
+secrets.yml
+secrets.properties
+private.key
+*.pem
+*.key
+*.crt
+*.p12
+*.jks
+
+# Build artifacts
+build/
+bin/
+
+# Test coverage
+coverage/
+*.coverage
+.nyc_output
+
+# Docker volumes
+docker-volumes/
+data/

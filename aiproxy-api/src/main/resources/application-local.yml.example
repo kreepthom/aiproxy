@@ -1,0 +1,64 @@
+# 本地开发环境配置示例
+# 使用方法：
+# 1. 复制此文件为 application-local.yml
+# 2. 填入您的实际配置值
+# 3. 启动应用时使用 --spring.profiles.active=local
+
+spring:
+  # MySQL Database Configuration
+  datasource:
+    url: jdbc:mysql://localhost:3306/ai_gateway?useSSL=false&serverTimezone=Asia/Shanghai&createDatabaseIfNotExist=true&allowPublicKeyRetrieval=true
+    username: root
+    password: your-mysql-password  # 替换为您的MySQL密码
+    
+  # Redis Configuration
+  data:
+    redis:
+      host: localhost
+      port: 6379
+      password: your-redis-password  # 替换为您的Redis密码（如果有）
+
+# Relay Configuration
+relay:
+  # Admin Account Configuration
+  admin:
+    auto-create: true
+    username: admin
+    password: your-admin-password  # 替换为您的管理员密码
+  
+  # Claude OAuth Configuration (Optional)
+  claude:
+    client-id: your-claude-client-id        # 如果需要OAuth，填入您的Client ID
+    client-secret: your-claude-client-secret # 如果需要OAuth，填入您的Client Secret
+  
+  # Gemini Configuration (Optional)
+  gemini:
+    api-key: your-gemini-api-key  # 如果需要Gemini，填入您的API Key
+  
+  # Security Configuration
+  security:
+    jwt:
+      secret: your-jwt-secret-at-least-32-characters  # 至少32个字符的JWT密钥
+      expiration: 86400000  # 24 hours
+    encryption:
+      key: your-encryption-key-must-be-32-chars  # 必须是32个字符的加密密钥
+  
+  # Proxy Configuration (Optional)
+  proxy:
+    enabled: false
+    type: socks5
+    host: 127.0.0.1
+    port: 1080
+    username: proxy-username  # 如果需要代理认证
+    password: proxy-password  # 如果需要代理认证
+
+# Server Configuration
+server:
+  port: 8080
+
+# Logging Configuration (for development)
+logging:
+  level:
+    com.claude.relay: DEBUG
+    org.springframework.web: DEBUG
+    org.springframework.security: DEBUG

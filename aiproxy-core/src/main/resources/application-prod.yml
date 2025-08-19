@@ -1,0 +1,30 @@
+spring:
+  redis:
+    host: redis
+    
+server:
+  port: 8080
+  
+logging:
+  level:
+    root: WARN
+    com.aiproxy: INFO
+    org.springframework: WARN
+  file:
+    name: /app/logs/claude-aiproxy.log
+    max-size: 100MB
+    max-history: 30
+    
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,metrics,prometheus
+        
+relay:
+  rate-limit:
+    enabled: true
+    default:
+      requests-per-minute: 100
+      requests-per-hour: 2000
+      tokens-per-day: 10000000
