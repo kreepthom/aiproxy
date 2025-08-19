@@ -60,26 +60,63 @@ public class ProxyService {
         // Claude Code system prompt - MUST be exact match!
         String claudeCodePrompt = "You are Claude Code, Anthropic's official CLI for Claude.";
         
+        // First, strip TTL from cache_control to avoid API errors
+        stripTtlFromCacheControl(modifiedRequest);
+        
+        // Then limit cache_control count to avoid exceeding API limit
+        limitCacheControlCount(modifiedRequest, 3); // Reserve 1 slot for Claude Code prompt
+        
         // Check if there's already a system parameter
         Object existingSystem = modifiedRequest.get("system");
         
         if (existingSystem != null) {
-            // Prepend to existing system message
+            // Handle different system formats
             if (existingSystem instanceof String) {
-                modifiedRequest.put("system", claudeCodePrompt + "\n\n" + existingSystem);
-            } else if (existingSystem instanceof List) {
-                List<Map<String, Object>> systemList = new ArrayList<>((List<Map<String, Object>>) existingSystem);
-                // Add Claude Code prompt as first content item
+                // Convert string to list format for consistency
+                List<Map<String, Object>> systemList = new ArrayList<>();
+                
+                // Add Claude Code prompt first
                 Map<String, Object> claudeCodeContent = new HashMap<>();
                 claudeCodeContent.put("type", "text");
                 claudeCodeContent.put("text", claudeCodePrompt);
-                
-                // Add cache control for the Claude Code prompt
                 Map<String, Object> cacheControl = new HashMap<>();
                 cacheControl.put("type", "ephemeral");
                 claudeCodeContent.put("cache_control", cacheControl);
+                systemList.add(claudeCodeContent);
                 
-                systemList.add(0, claudeCodeContent);
+                // Add user's system prompt (if different from Claude Code prompt)
+                if (!existingSystem.equals(claudeCodePrompt)) {
+                    Map<String, Object> userContent = new HashMap<>();
+                    userContent.put("type", "text");
+                    userContent.put("text", existingSystem);
+                    systemList.add(userContent);
+                }
+                
+                modifiedRequest.put("system", systemList);
+            } else if (existingSystem instanceof List) {
+                List<Map<String, Object>> systemList = new ArrayList<>((List<Map<String, Object>>) existingSystem);
+                
+                // Check if Claude Code prompt already exists
+                boolean hasClaudeCodePrompt = systemList.stream()
+                    .anyMatch(item -> {
+                        if (item instanceof Map) {
+                            Object text = item.get("text");
+                            return claudeCodePrompt.equals(text);
+                        }
+                        return false;
+                    });
+                
+                if (!hasClaudeCodePrompt) {
+                    // Add Claude Code prompt as first content item
+                    Map<String, Object> claudeCodeContent = new HashMap<>();
+                    claudeCodeContent.put("type", "text");
+                    claudeCodeContent.put("text", claudeCodePrompt);
+                    Map<String, Object> cacheControl = new HashMap<>();
+                    cacheControl.put("type", "ephemeral");
+                    claudeCodeContent.put("cache_control", cacheControl);
+                    systemList.add(0, claudeCodeContent);
+                }
+                
                 modifiedRequest.put("system", systemList);
             }
         } else {
@@ -88,16 +125,99 @@ public class ProxyService {
             Map<String, Object> claudeCodeContent = new HashMap<>();
             claudeCodeContent.put("type", "text");
             claudeCodeContent.put("text", claudeCodePrompt);
-            
             Map<String, Object> cacheControl = new HashMap<>();
             cacheControl.put("type", "ephemeral");
             claudeCodeContent.put("cache_control", cacheControl);
-            
             systemList.add(claudeCodeContent);
             modifiedRequest.put("system", systemList);
         }
         
         return modifiedRequest;
+    }
+    
+    /**
+     * Strip TTL field from cache_control to avoid API errors
+     */
+    @SuppressWarnings("unchecked")
+    private void stripTtlFromCacheControl(Map<String, Object> requestBody) {
+        // Process system field
+        Object system = requestBody.get("system");
+        if (system instanceof List) {
+            processContentArrayForTtl((List<Object>) system);
+        }
+        
+        // Process messages field
+        Object messages = requestBody.get("messages");
+        if (messages instanceof List) {
+            for (Object message : (List<Object>) messages) {
+                if (message instanceof Map) {
+                    Object content = ((Map<String, Object>) message).get("content");
+                    if (content instanceof List) {
+                        processContentArrayForTtl((List<Object>) content);
+                    }
+                }
+            }
+        }
+    }
+    
+    @SuppressWarnings("unchecked")
+    private void processContentArrayForTtl(List<Object> contentArray) {
+        for (Object item : contentArray) {
+            if (item instanceof Map) {
+                Map<String, Object> itemMap = (Map<String, Object>) item;
+                Object cacheControl = itemMap.get("cache_control");
+                if (cacheControl instanceof Map) {
+                    Map<String, Object> cacheControlMap = (Map<String, Object>) cacheControl;
+                    if (cacheControlMap.containsKey("ttl")) {
+                        cacheControlMap.remove("ttl");
+                        log.debug("Removed ttl from cache_control");
+                    }
+                }
+            }
+        }
+    }
+    
+    /**
+     * Limit the number of cache_control blocks to avoid exceeding API limit (max 4)
+     */
+    @SuppressWarnings("unchecked")
+    private void limitCacheControlCount(Map<String, Object> requestBody, int maxCount) {
+        AtomicInteger currentCount = new AtomicInteger(0);
+        
+        // Count and potentially remove cache_control from system
+        Object system = requestBody.get("system");
+        if (system instanceof List) {
+            limitCacheControlInArray((List<Object>) system, currentCount, maxCount);
+        }
+        
+        // Count and potentially remove cache_control from messages
+        Object messages = requestBody.get("messages");
+        if (messages instanceof List) {
+            for (Object message : (List<Object>) messages) {
+                if (message instanceof Map) {
+                    Object content = ((Map<String, Object>) message).get("content");
+                    if (content instanceof List) {
+                        limitCacheControlInArray((List<Object>) content, currentCount, maxCount);
+                    }
+                }
+            }
+        }
+    }
+    
+    @SuppressWarnings("unchecked")
+    private void limitCacheControlInArray(List<Object> array, AtomicInteger currentCount, int maxCount) {
+        for (Object item : array) {
+            if (item instanceof Map) {
+                Map<String, Object> itemMap = (Map<String, Object>) item;
+                if (itemMap.containsKey("cache_control")) {
+                    if (currentCount.incrementAndGet() > maxCount) {
+                        // Remove excess cache_control
+                        itemMap.remove("cache_control");
+                        log.debug("Removed excess cache_control to stay within API limit");
+                    }
+                }
+            }
+        }
     }
     
     private Flux<ServerSentEvent<String>> relayStreamRequestWithRetry(Map<String, Object> request, ApiKey apiKey, Set<String> triedAccounts, int attempt) {

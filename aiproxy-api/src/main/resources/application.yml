@@ -11,6 +11,8 @@ spring:
   webflux:
     stream:
       timeout: 300s
+  codec:
+    max-in-memory-size: 10MB  # 增加到10MB，支持大请求体（如包含图片的消息）
 
   # MySQL Database Configuration
   datasource:

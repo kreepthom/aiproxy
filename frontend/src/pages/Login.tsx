@@ -32,9 +32,9 @@ const Login: React.FC = () => {
           <Space direction="vertical" size="small">
             <ApiOutlined className="text-6xl text-purple-600" />
             <Title level={2} className="!mb-2">
-              Claude Relay
+              AI Proxy
             </Title>
-            <Text type="secondary">API 中继管理系统</Text>
+            <Text type="secondary">AI API 代理管理系统</Text>
           </Space>
         </div>
 

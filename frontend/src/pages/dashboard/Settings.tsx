@@ -166,7 +166,7 @@ const Settings: React.FC = () => {
                 label="系统名称"
                 rules={[{ required: true, message: '请输入系统名称' }]}
               >
-                <Input placeholder="Claude Relay" />
+                <Input placeholder="AI Proxy" />
               </Form.Item>
 
               <Form.Item
